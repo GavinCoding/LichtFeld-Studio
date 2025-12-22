@@ -353,6 +353,9 @@ target_link_libraries(${PROJECT_NAME}
 
 # Copy nvImageCodec shared libraries next to executable for easy deployment
 if(TARGET nvimgcodec)
+    # Force build of nvimgcodec even with EXCLUDE_FROM_ALL
+    add_dependencies(${PROJECT_NAME} nvimgcodec)
+
     # Add post-build command to copy libraries and create symlinks (Unix only)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -381,6 +384,9 @@ endif()
 # EXTENSIONS COPYING - Copy nvImageCodec extensions to build/extensions
 # =============================================================================
 if(TARGET nvjpeg_ext)
+    # Force build of nvjpeg_ext even with EXCLUDE_FROM_ALL
+    add_dependencies(${PROJECT_NAME} nvjpeg_ext)
+
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "$<TARGET_FILE_DIR:nvjpeg_ext>"
@@ -390,6 +396,9 @@ if(TARGET nvjpeg_ext)
 endif()
 
 if(TARGET nvjpeg2k_ext)
+    # Force build of nvjpeg2k_ext even with EXCLUDE_FROM_ALL
+    add_dependencies(${PROJECT_NAME} nvjpeg2k_ext)
+
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "$<TARGET_FILE_DIR:nvjpeg2k_ext>"
