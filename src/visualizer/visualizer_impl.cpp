@@ -6,6 +6,7 @@
 #include "command/commands/crop_command.hpp"
 #include "command/commands/selection_command.hpp"
 #include "core/data_loading_service.hpp"
+#include "core/event_bus.hpp"
 #include "core/logger.hpp"
 #include "core/services.hpp"
 #include "scene/scene_manager.hpp"
@@ -73,7 +74,8 @@ namespace lfs::vis {
     }
 
     VisualizerImpl::~VisualizerImpl() {
-        // Clear services before destroying components
+        // Clear event handlers before destroying components to prevent use-after-free
+        lfs::core::event::bus().clear_all();
         services().clear();
 
         trainer_manager_.reset();
