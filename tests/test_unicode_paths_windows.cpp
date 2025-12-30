@@ -22,6 +22,13 @@
 #include <sstream>
 #include <vector>
 
+// Check if we have access to the full library (not standalone unicode test build)
+#if __has_include("core/parameters.hpp")
+#define LFS_HAS_FULL_LIBRARY 1
+#include "core/parameters.hpp"
+#include <nlohmann/json.hpp>
+#endif
+
 #include "core/path_utils.hpp"
 
 namespace fs = std::filesystem;
@@ -2924,3 +2931,254 @@ TEST_F(UnicodePathTest, CompleteExportWorkflow) {
     EXPECT_EQ(fs::directory_iterator(checkpoints_dir) != fs::directory_iterator(), true);
     EXPECT_EQ(fs::directory_iterator(exports_dir) != fs::directory_iterator(), true);
 }
+
+// ============================================================================
+// Test 51: DatasetConfig::from_json with Unicode Paths
+// This tests the critical path where paths are read from JSON and must be
+// properly converted from UTF-8 to filesystem paths.
+// Only available when full library is linked (not standalone unicode test build)
+// ============================================================================
+
+#ifdef LFS_HAS_FULL_LIBRARY
+TEST_F(UnicodePathTest, DatasetConfigFromJsonUnicodePaths) {
+    // Create directories with Unicode characters
+    auto data_dir = test_root_ / "データ_data_数据_데이터";
+    auto output_dir = test_root_ / "出力_output_輸出_출력";
+    fs::create_directories(data_dir);
+    fs::create_directories(output_dir);
+
+    // Create JSON with Unicode paths encoded as UTF-8
+    nlohmann::json j;
+    j["data_path"] = path_to_utf8(data_dir);
+    j["output_folder"] = path_to_utf8(output_dir);
+    j["images"] = "images";
+    j["resize_factor"] = 1;
+    j["max_width"] = 1920;
+    j["test_every"] = 8;
+
+    // Parse JSON to DatasetConfig - this should use utf8_to_path internally
+    auto dataset = lfs::core::param::DatasetConfig::from_json(j);
+
+    // Verify paths were correctly converted from UTF-8
+    EXPECT_EQ(dataset.data_path, data_dir);
+    EXPECT_EQ(dataset.output_path, output_dir);
+
+    // Verify we can use these paths for actual filesystem operations
+    // This tests the round-trip: path -> UTF-8 JSON -> path -> filesystem
+    auto test_file = dataset.output_path / "checkpoints" / "test.txt";
+    fs::create_directories(test_file.parent_path());
+
+    std::ofstream file;
+    EXPECT_TRUE(open_file_for_write(test_file, file));
+    file << "checkpoint test";
+    file.close();
+
+    EXPECT_TRUE(fs::exists(test_file));
+
+    // Verify path_to_utf8 output matches the original JSON
+    EXPECT_EQ(path_to_utf8(dataset.data_path), j["data_path"].get<std::string>());
+    EXPECT_EQ(path_to_utf8(dataset.output_path), j["output_folder"].get<std::string>());
+}
+
+// ============================================================================
+// Test 52: DatasetConfig round-trip through JSON with Unicode Paths
+// Tests to_json and from_json preserve Unicode paths correctly
+// ============================================================================
+
+TEST_F(UnicodePathTest, DatasetConfigJsonRoundTrip) {
+    // Create directories with various Unicode character sets
+    auto data_dir = test_root_ / "プロジェクト_project_项目";
+    auto output_dir = test_root_ / "結果_results_结果";
+    fs::create_directories(data_dir);
+    fs::create_directories(output_dir);
+
+    // Create original config
+    lfs::core::param::DatasetConfig original;
+    original.data_path = data_dir;
+    original.output_path = output_dir;
+    original.images = "images";
+    original.resize_factor = 2;
+    original.max_width = 3840;
+    original.test_every = 4;
+
+    // Round-trip through JSON
+    nlohmann::json j = original.to_json();
+    auto restored = lfs::core::param::DatasetConfig::from_json(j);
+
+    // Verify paths are identical after round-trip
+    EXPECT_EQ(restored.data_path, original.data_path);
+    EXPECT_EQ(restored.output_path, original.output_path);
+
+    // Verify JSON contains UTF-8 encoded paths
+    std::string json_data_path = j["data_path"].get<std::string>();
+    std::string json_output_path = j["output_folder"].get<std::string>();
+
+    // The JSON should contain the UTF-8 representation
+    EXPECT_EQ(json_data_path, path_to_utf8(data_dir));
+    EXPECT_EQ(json_output_path, path_to_utf8(output_dir));
+
+    // Verify filesystem operations work with restored paths
+    auto checkpoint_dir = restored.output_path / "checkpoints";
+    fs::create_directories(checkpoint_dir);
+    EXPECT_TRUE(fs::exists(checkpoint_dir));
+}
+
+// ============================================================================
+// Test 53: utf8_to_path handles strings with embedded null characters
+// This simulates ImGui InputText buffers which are resized with null padding
+// ============================================================================
+
+TEST_F(UnicodePathTest, Utf8ToPathHandlesEmbeddedNullCharacters) {
+    // Simulate ImGui InputText buffer: actual path followed by null padding
+    constexpr size_t BUFFER_SIZE = 1024;
+    std::string buffer = path_to_utf8(test_root_ / "output");
+    size_t original_length = buffer.size();
+    buffer.resize(BUFFER_SIZE);  // Pads with null characters like ImGui does
+
+    // Verify buffer has embedded nulls
+    ASSERT_GT(buffer.size(), original_length);
+    ASSERT_EQ(buffer[original_length], '\0');
+
+    // Convert to path - should stop at first null, not include padding
+    fs::path converted = utf8_to_path(buffer);
+
+    // Verify the path is correct (no embedded nulls)
+    fs::path expected = test_root_ / "output";
+    EXPECT_EQ(converted, expected);
+
+    // Critical test: path append should work correctly
+    fs::path with_subdir = converted / "checkpoints";
+    EXPECT_NE(with_subdir, converted);  // Should NOT be equal (append should work)
+    EXPECT_TRUE(with_subdir.string().find("checkpoints") != std::string::npos);
+
+    // Verify we can actually create the directory
+    fs::create_directories(with_subdir);
+    EXPECT_TRUE(fs::exists(with_subdir));
+}
+
+// ============================================================================
+// Test 54: utf8_to_path with Unicode paths and embedded null characters
+// Tests the combination of Unicode characters and buffer padding
+// ============================================================================
+
+TEST_F(UnicodePathTest, Utf8ToPathHandlesUnicodeWithEmbeddedNulls) {
+    // Create a Unicode directory
+    auto unicode_dir = test_root_ / "日本語_output";
+    fs::create_directories(unicode_dir);
+    ASSERT_TRUE(fs::exists(unicode_dir));
+
+    // Simulate ImGui buffer with Unicode path
+    constexpr size_t BUFFER_SIZE = 1024;
+    std::string buffer = path_to_utf8(unicode_dir);
+    size_t original_length = buffer.size();
+    buffer.resize(BUFFER_SIZE);  // Pad with nulls
+
+    // Convert and verify
+    fs::path converted = utf8_to_path(buffer);
+    EXPECT_EQ(converted, unicode_dir);
+
+    // Test path append with checkpoint-like structure
+    fs::path checkpoint_dir = converted / "checkpoints";
+    fs::path checkpoint_file = checkpoint_dir / "checkpoint_1000.resume";
+
+    // Verify path operations worked (not truncated by embedded nulls)
+    std::string checkpoint_str = path_to_utf8(checkpoint_file);
+    EXPECT_TRUE(checkpoint_str.find("日本語_output") != std::string::npos);
+    EXPECT_TRUE(checkpoint_str.find("checkpoints") != std::string::npos);
+    EXPECT_TRUE(checkpoint_str.find("checkpoint_1000.resume") != std::string::npos);
+
+    // Create the structure
+    fs::create_directories(checkpoint_dir);
+    EXPECT_TRUE(fs::exists(checkpoint_dir));
+}
+
+// ============================================================================
+// Test 55: Checkpoint path construction with buffer-padded paths
+// Simulates the exact scenario that was failing: SaveDirectoryPopup → Trainer
+// ============================================================================
+
+TEST_F(UnicodePathTest, CheckpointPathConstructionWithBufferPadding) {
+    // Create test directories with various Unicode names
+    std::vector<std::string> test_names = {
+        "simple_output",
+        "日本語_テスト",
+        "中文_输出",
+        "Mixed_混合_ミックス",
+    };
+
+    for (const auto& name : test_names) {
+        auto base_dir = test_root_ / utf8_to_path(name);
+        fs::create_directories(base_dir);
+
+        // Simulate the SaveDirectoryPopup flow:
+        // 1. Path is converted to UTF-8 for display
+        // 2. String is resized to buffer size (1024)
+        // 3. String is converted back to path via utf8_to_path
+        constexpr size_t BUFFER_SIZE = 1024;
+        std::string buffer = path_to_utf8(base_dir);
+        buffer.resize(BUFFER_SIZE);  // This was causing the bug!
+
+        // This is what Trainer::save_checkpoint receives
+        fs::path output_path = utf8_to_path(buffer);
+
+        // This is what checkpoint.cpp does
+        fs::path checkpoint_dir = output_path / "checkpoints";
+        fs::path checkpoint_file = checkpoint_dir / "checkpoint_7000.resume";
+
+        // Verify the paths are correctly constructed
+        EXPECT_NE(checkpoint_dir, output_path)
+            << "Path append failed for: " << name;
+        EXPECT_TRUE(checkpoint_dir.string().length() > output_path.string().length())
+            << "Checkpoint dir not longer than output path for: " << name;
+
+        // Verify we can create and use these paths
+        std::error_code ec;
+        fs::create_directories(checkpoint_dir, ec);
+        EXPECT_FALSE(ec) << "Failed to create checkpoint dir for: " << name << " - " << ec.message();
+        EXPECT_TRUE(fs::exists(checkpoint_dir)) << "Checkpoint dir doesn't exist for: " << name;
+
+        // Write a test file to the checkpoint path
+        std::ofstream file;
+        open_file_for_write(checkpoint_file, std::ios::binary, file);
+        EXPECT_TRUE(file.is_open()) << "Failed to open checkpoint file for: " << name;
+        if (file.is_open()) {
+            file << "test checkpoint data";
+            file.close();
+            EXPECT_TRUE(fs::exists(checkpoint_file)) << "Checkpoint file doesn't exist for: " << name;
+        }
+    }
+}
+
+// ============================================================================
+// Test 56: Native string size verification after utf8_to_path
+// Ensures no hidden null characters in the path's internal representation
+// ============================================================================
+
+TEST_F(UnicodePathTest, NativeStringSizeAfterUtf8ToPath) {
+    auto test_dir = test_root_ / "native_size_test";
+    fs::create_directories(test_dir);
+
+    // Create buffer-padded string
+    constexpr size_t BUFFER_SIZE = 1024;
+    std::string buffer = path_to_utf8(test_dir);
+    size_t utf8_length = std::strlen(buffer.c_str());  // Length without padding
+    buffer.resize(BUFFER_SIZE);
+
+    // Convert to path
+    fs::path converted = utf8_to_path(buffer);
+
+    // The native string should NOT have extra null characters
+    // Compare with a path created directly (without buffer padding)
+    fs::path direct = test_dir;
+
+    EXPECT_EQ(converted.native().size(), direct.native().size())
+        << "Native string sizes differ - possible embedded nulls";
+    EXPECT_EQ(converted.native(), direct.native())
+        << "Native strings differ - possible encoding issue";
+
+    // Verify path append produces correct size increase
+    fs::path with_subdir = converted / "subdir";
+    EXPECT_GT(with_subdir.native().size(), converted.native().size())
+        << "Path append didn't increase native size - embedded null issue";
+}
+#endif // LFS_HAS_FULL_LIBRARY
