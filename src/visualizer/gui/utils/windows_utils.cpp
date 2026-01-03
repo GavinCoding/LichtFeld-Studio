@@ -496,9 +496,10 @@ namespace lfs::vis::gui {
                                            ? shell_escape(lfs::core::path_to_utf8(startDir))
                                            : "'.'";
         const std::string primary = "zenity --file-selection "
-                                    "--filename=" + start_path + "/ "
-                                    "--file-filter='Point Cloud|*.ply *.sog *.spz' "
-                                    "--title='Open Point Cloud' 2>/dev/null";
+                                    "--filename=" +
+                                    start_path + "/ "
+                                                 "--file-filter='Point Cloud|*.ply *.sog *.spz' "
+                                                 "--title='Open Point Cloud' 2>/dev/null";
         const std::string fallback = "kdialog --getopenfilename " + start_path + " 'Point Cloud (*.ply *.sog *.spz)' 2>/dev/null";
 
         const std::string result = runDialogCommand(primary, fallback);

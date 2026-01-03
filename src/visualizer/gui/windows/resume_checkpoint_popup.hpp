@@ -8,8 +8,8 @@
 #include "training/checkpoint.hpp"
 #include <filesystem>
 #include <functional>
-#include <imgui.h>
 #include <string>
+#include <imgui.h>
 
 namespace lfs::vis::gui {
 

@@ -6,8 +6,8 @@
 
 #include <deque>
 #include <functional>
-#include <imgui.h>
 #include <string>
+#include <imgui.h>
 
 namespace lfs::vis::gui {
 
